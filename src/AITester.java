@@ -44,6 +44,7 @@ public class AITester {
     //生成自己的棋手
     private static ArrayList<Player> createPlayers(){
         ArrayList<Player> players = new ArrayList<>();
+        players.add(new stud.g06.AI());  // G06 AI
         players.add(new stud.g88.AI());
         players.add(new stud.g77.AI());
         players.add(new stud.g99.AI());
