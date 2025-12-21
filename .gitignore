@@ -1,0 +1,14 @@
+# IDE
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+
+# Build output
+out/
+*.class
+*.jar
+
+# Project specific
+lib/

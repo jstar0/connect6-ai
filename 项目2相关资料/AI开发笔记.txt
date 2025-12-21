@@ -1,0 +1,287 @@
+================================================================================
+                        六子棋AI开发笔记 - 项目二
+================================================================================
+
+【项目路径】
+/Users/jstar/ComputerScience/EduProj/ClassIntroToAI/Proj-2/
+
+================================================================================
+一、版本要求（来自 项目2-博弈搜索.pdf）
+================================================================================
+
+【V0 - 随机棋手】
+- 走法1: 两个子位置均在整个棋盘(19*19)随机
+- 走法2: 第一个子随机，第二个子下在第一个子相邻8个空位之一
+- 走法3: 在中心区域(13*13)随机，连续10次不中则扩展到全棋盘
+- 推荐方法: 洗牌算法 - 将下棋范围内所有位置打散，逐个取出
+
+【V1 - 第一阶段】偏重于着法生成，只看一步
+(a) 己方有胜着时，能够找到
+(b) 设计能够快速计算威胁个数的算法，当对方威胁不多于两个时，能够防守得住
+(c) 选点有一定智能
+(d) 下棋过程中不会出现异常
+
+【V2 - 第二阶段】偏重于盘面估值、盘面更新及博弈树搜索
+(a) 能够快速找出当前局面下双方的"有效路"，并能对局面进行快速评估
+(b) 改进着法生成策略，能够高效展开博弈树搜索，进行正确的α-β剪枝
+
+【V3 - 第三阶段】高级搜索
+- 能够进行"威胁空间搜索（TBS）"或"蒙特卡洛树搜索"
+- 对前面阶段的程序保持高胜率
+
+================================================================================
+二、游戏规则与坐标系统（来自 棋盘坐标.txt）
+================================================================================
+
+【棋盘】
+- 19x19 棋盘，共361个位置
+- 坐标系统：白棋视角 (col, row)
+- 左上角 (0,0)，右下角 (18,18)
+- index = row * 19 + col，范围 0-360
+
+【游戏流程】
+- 黑棋先手，在中心(J,J)即(9,9)放置1颗棋子
+- 之后每方每回合放置2颗棋子
+- 先连成6子者获胜
+
+【Move类构造函数】
+- Move(char c0, char r0, char c1, char r1) - 字母坐标 A~S
+- Move(int index0, int index1) - 索引坐标 0~360
+
+================================================================================
+三、核心API（来自框架源码）
+================================================================================
+
+【AI基类】core.player.AI (继承自 Player)
+必须实现的方法：
+- Move findNextMove(Move opponentMove) - 根据对手走法返回自己的走法
+- String name() - 返回AI名称
+
+可用成员：
+- Board board - 棋盘对象（需要在playGame中初始化）
+- PieceColor _myColor - 自己的棋子颜色
+
+【Board类】core.board.Board
+关键方法：
+- PieceColor get(int k) - 获取位置k的棋子颜色
+- PieceColor get(char c, char r) - 获取(c,r)位置的棋子颜色
+- void makeMove(Move mov) - 执行走法
+- void undo() - 撤销上一步
+- boolean legalMove(Move mov) - 检查走法是否合法
+- boolean gameOver() - 检查游戏是否结束
+- PieceColor whoseMove() - 当前该谁走
+
+常量：
+- SIDE = 19 (棋盘边长)
+- FORWARD = {{0,1}, {1,0}, {1,1}, {1,-1}} (四个方向：横、竖、斜、反斜)
+
+【PieceColor枚举】core.board.PieceColor
+- BLACK, WHITE, EMPTY
+- opposite() - 返回对方颜色
+
+【Move类】core.game.Move
+- index1(), index2() - 获取两个落子位置的索引
+- col0(), row0(), col1(), row1() - 获取字母坐标
+- static int index(char c, char r) - 字母坐标转索引
+- static boolean validSquare(int k) - 检查索引是否有效
+- static boolean validSquare(char c, char r) - 检查坐标是否有效
+
+================================================================================
+四、现有示例AI分析
+================================================================================
+
+【stud.g77.AI】- 有BUG的随机棋手
+```java
+int index1 = rand.nextInt(169);  // BUG! 应该是361
+int index2 = rand.nextInt(169);  // BUG! 应该是361
+```
+只能在左上角13x13区域落子，范围错误。
+
+【stud.g88.AI】- 正确的随机棋手
+```java
+int index1 = rand.nextInt(361);  // 正确
+int index2 = rand.nextInt(361);  // 正确
+```
+
+【stud.g99.AI】- 有BUG的随机棋手
+```java
+int index1 = rand.nextInt(179);  // BUG! 应该是361
+int index2 = rand.nextInt(179);  // BUG! 应该是361
+```
+
+================================================================================
+五、AI代码模板
+================================================================================
+
+```java
+package stud.gXX;  // 替换XX为你的组号
+
+import core.board.PieceColor;
+import core.game.Game;
+import core.game.Move;
+
+public class AI extends core.player.AI {
+
+    @Override
+    public Move findNextMove(Move opponentMove) {
+        // 1. 先执行对手的走法
+        this.board.makeMove(opponentMove);
+
+        // 2. 在这里实现你的AI逻辑
+        // TODO: 实现着法生成和搜索
+
+        Move myMove = /* 计算出的走法 */;
+
+        // 3. 执行自己的走法并返回
+        this.board.makeMove(myMove);
+        return myMove;
+    }
+
+    @Override
+    public String name() {
+        return "GXX";  // 替换为你的组号
+    }
+
+    @Override
+    public void playGame(Game game) {
+        super.playGame(game);
+        // 初始化你的棋盘和数据结构
+        board = new GXXBoard("GXXBoard");
+    }
+}
+```
+
+================================================================================
+六、V1实现思路
+================================================================================
+
+【核心功能】
+1. 胜着检测 - 检查是否能一步获胜（连成6子）
+2. 威胁检测 - 检测对方的威胁（活五、冲五、活四等）
+3. 防守逻辑 - 当威胁≤2时能防住
+4. 智能选点 - 优先选择有价值的位置
+
+【棋型定义】
+- 活六/连六: XXXXXX (获胜)
+- 活五: _XXXXX_ (必胜威胁)
+- 冲五: XXXXX_ 或 _XXXXX (一步成六)
+- 活四: _XXXX_ (两头可成五)
+- 冲四: XXXX_ 或 _XXXX (一头可成五)
+- 活三: _XXX_ (两头可成四)
+
+【着法生成策略】
+1. 检查己方是否有胜着 -> 直接获胜
+2. 检查对方是否有胜着 -> 必须防守
+3. 检查己方威胁 -> 进攻
+4. 检查对方威胁 -> 防守
+5. 选择高价值位置 -> 发展
+
+【位置价值评估】
+- 靠近中心的位置价值更高
+- 靠近已有棋子的位置价值更高
+- 能形成连续棋型的位置价值更高
+
+================================================================================
+七、V2实现思路
+================================================================================
+
+【有效路(Line)概念】
+- 棋盘上任意连续6个位置构成一条"路"
+- 只有同色棋子的路才是"有效路"
+- 有效路的价值取决于其中棋子数量和空位分布
+
+【盘面估值】
+- 统计双方所有有效路
+- 根据有效路中棋子数量评分
+- 综合计算盘面分数
+
+【Alpha-Beta剪枝】
+```
+function alphabeta(node, depth, α, β, maximizingPlayer)
+    if depth = 0 or node is terminal
+        return evaluate(node)
+    if maximizingPlayer
+        value := -∞
+        for each child of node
+            value := max(value, alphabeta(child, depth-1, α, β, FALSE))
+            α := max(α, value)
+            if α ≥ β
+                break  // β剪枝
+        return value
+    else
+        value := +∞
+        for each child of node
+            value := min(value, alphabeta(child, depth-1, α, β, TRUE))
+            β := min(β, value)
+            if α ≥ β
+                break  // α剪枝
+        return value
+```
+
+【着法生成优化】
+- 只考虑已有棋子周围的空位
+- 按威胁程度排序候选走法
+- 使用启发式剪枝减少搜索空间
+
+================================================================================
+八、测试方法
+================================================================================
+
+【AITester.java 三种测试模式】
+
+1. zeroCarnival() - 随机棋手大狂欢
+   - 设置 Configuration.GUI = false
+   - 每对棋手下500局（先后手各250局）
+   - 用于测试随机棋手
+
+2. oucLeague() - 海之子联赛
+   - 设置 Configuration.GUI = true
+   - 主场先手与其他棋手对局
+   - 用于正式比赛
+
+3. oneMatch() - 单场比赛
+   - 两个棋手先后手各下一局
+   - 用于调试
+
+【运行测试】
+修改 AITester.java 的 main 方法，选择测试模式
+修改 createPlayers() 添加你的AI
+
+================================================================================
+九、下一步TODO
+================================================================================
+
+□ 1. 确认你的组号（创建 stud/gXX 包）
+□ 2. 实现V0随机棋手（使用洗牌算法）
+□ 3. 实现V1基础AI
+   □ 3.1 实现棋型检测（连六、活五、冲五、活四等）
+   □ 3.2 实现胜着检测
+   □ 3.3 实现威胁检测和防守
+   □ 3.4 实现智能选点
+□ 4. 实现V2进阶AI
+   □ 4.1 实现有效路检测
+   □ 4.2 实现盘面估值函数
+   □ 4.3 实现Alpha-Beta搜索
+   □ 4.4 优化着法生成
+□ 5. 测试和调优
+   □ 5.1 与随机棋手对战测试
+   □ 5.2 性能优化
+   □ 5.3 打包jar文件
+
+================================================================================
+十、重要文件路径
+================================================================================
+
+项目根目录: /Users/jstar/ComputerScience/EduProj/ClassIntroToAI/Proj-2/
+源码目录: /Users/jstar/ComputerScience/EduProj/ClassIntroToAI/Proj-2/src/
+框架源码: /Users/jstar/ComputerScience/EduProj/ClassIntroToAI/Proj-2/framework_src/
+资料目录: /Users/jstar/ComputerScience/EduProj/ClassIntroToAI/Proj-2/项目2相关资料/
+
+关键文件:
+- src/AITester.java - 测试入口
+- src/stud/g88/AI.java - 正确的随机棋手示例
+- framework_src/src/core.board/Board.java - 棋盘类
+- framework_src/src/core.player/Player.java - 玩家基类
+- framework_src/src/core.player/AI.java - AI基类
+
+================================================================================
