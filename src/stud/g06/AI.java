@@ -8,194 +8,196 @@ import core.game.Move;
 import java.util.*;
 
 /**
- * G06 AI - V1 基础AI
- * 功能：胜着检测、威胁防守、智能选点
+ * G06 AI - V2 搜索AI
+ * 功能：Alpha-Beta搜索 + 有效路估值 + 置换表 + 迭代加深
  */
 public class AI extends core.player.AI {
 
-    // 四个方向：横、竖、主对角、副对角
     private static final int[][] DIRECTIONS = {{1, 0}, {0, 1}, {1, 1}, {1, -1}};
+    private static final int MAX_DEPTH = 2;
+    private static final int INF = 10000000;
 
-    // 棋型分数
-    private static final int WIN = 1000000;      // 连6
-    private static final int LIVE_FIVE = 100000; // 活5
-    private static final int FOUR = 10000;       // 冲4/活4
-    private static final int LIVE_THREE = 1000;  // 活3
-    private static final int THREE = 100;        // 眠3
-    private static final int LIVE_TWO = 10;      // 活2
+    // 置换表
+    private Map<Long, int[]> transTable = new HashMap<>();
+    private long[][] zobristTable = new long[361][3]; // 0=empty, 1=black, 2=white
+    private long currentHash = 0;
+
+    public AI() {
+        initZobrist();
+    }
+
+    private void initZobrist() {
+        Random rand = new Random(12345);
+        for (int i = 0; i < 361; i++) {
+            for (int j = 0; j < 3; j++) {
+                zobristTable[i][j] = rand.nextLong();
+            }
+        }
+    }
 
     @Override
     public Move findNextMove(Move opponentMove) {
         board.makeMove(opponentMove);
+        updateHash(opponentMove);
+
         PieceColor myColor = board.whoseMove();
-        PieceColor oppColor = myColor.opposite();
 
-        // 1. 检查己方胜着
-        Move winMove = findWinningMove(myColor);
-        if (winMove != null) {
-            board.makeMove(winMove);
-            return winMove;
+        // 迭代加深搜索
+        Move bestMove = null;
+        for (int depth = 1; depth <= MAX_DEPTH; depth++) {
+            bestMove = alphaBetaRoot(myColor, depth);
         }
 
-        // 2. 检查对方威胁并防守
-        List<Integer> oppThreats = findThreats(oppColor);
-        if (oppThreats.size() > 0) {
-            Move defenseMove = defendThreats(oppThreats, myColor);
-            if (defenseMove != null) {
-                board.makeMove(defenseMove);
-                return defenseMove;
-            }
-        }
-
-        // 3. 智能选点 - 基于位置评分
-        Move bestMove = findBestMove(myColor);
         board.makeMove(bestMove);
+        updateHash(bestMove);
         return bestMove;
     }
 
-    // 寻找胜着（能连6的走法）
-    private Move findWinningMove(PieceColor color) {
-        List<Integer> candidates = getCandidates();
+    // Alpha-Beta根节点
+    private Move alphaBetaRoot(PieceColor color, int depth) {
+        List<Move> moves = generateMoves(color);
+        if (moves.isEmpty()) return null;
 
+        Move bestMove = moves.get(0);
+        int bestScore = -INF;
+
+        for (Move move : moves) {
+            makeMove(move);
+            int score = -alphaBeta(color.opposite(), depth - 1, -INF, -bestScore);
+            undoMove(move);
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestMove = move;
+            }
+        }
+
+        return bestMove;
+    }
+
+    // Alpha-Beta搜索
+    private int alphaBeta(PieceColor color, int depth, int alpha, int beta) {
+        // 置换表查询
+        int[] cached = transTable.get(currentHash);
+        if (cached != null && cached[0] >= depth) {
+            return cached[1];
+        }
+
+        if (depth == 0) {
+            int score = evaluate(color);
+            transTable.put(currentHash, new int[]{depth, score});
+            return score;
+        }
+
+        List<Move> moves = generateMoves(color);
+        if (moves.isEmpty()) {
+            return evaluate(color);
+        }
+
+        int bestScore = -INF;
+        for (Move move : moves) {
+            makeMove(move);
+            int score = -alphaBeta(color.opposite(), depth - 1, -beta, -alpha);
+            undoMove(move);
+
+            bestScore = Math.max(bestScore, score);
+            alpha = Math.max(alpha, score);
+            if (alpha >= beta) break; // 剪枝
+        }
+
+        transTable.put(currentHash, new int[]{depth, bestScore});
+        return bestScore;
+    }
+
+    // 生成走法（智能排序）
+    private List<Move> generateMoves(PieceColor color) {
+        List<Integer> candidates = getCandidates();
+        List<Move> moves = new ArrayList<>();
+
+        // 先检查胜着
         for (int i = 0; i < candidates.size(); i++) {
             int pos1 = candidates.get(i);
             for (int j = i + 1; j < candidates.size(); j++) {
                 int pos2 = candidates.get(j);
+                Move move = new Move(pos1, pos2);
 
-                // 模拟下棋
-                board.makeMove(new Move(pos1, pos2));
+                board.makeMove(move);
                 boolean wins = checkWin(pos1, color) || checkWin(pos2, color);
                 board.undo();
 
                 if (wins) {
-                    return new Move(pos1, pos2);
+                    moves.add(0, move); // 胜着放最前
+                } else {
+                    moves.add(move);
                 }
             }
         }
-        return null;
-    }
 
-    // 检查某位置是否形成连6
-    private boolean checkWin(int pos, PieceColor color) {
-        int col = pos % 19;
-        int row = pos / 19;
-
-        for (int[] dir : DIRECTIONS) {
-            int count = 1;
-            // 正向
-            for (int k = 1; k < 6; k++) {
-                int nc = col + dir[0] * k;
-                int nr = row + dir[1] * k;
-                if (nc < 0 || nc >= 19 || nr < 0 || nr >= 19) break;
-                if (board.get(nc * 19 + nr) != color) break;
-                count++;
-            }
-            // 反向
-            for (int k = 1; k < 6; k++) {
-                int nc = col - dir[0] * k;
-                int nr = row - dir[1] * k;
-                if (nc < 0 || nc >= 19 || nr < 0 || nr >= 19) break;
-                if (board.get(nc * 19 + nr) != color) break;
-                count++;
-            }
-            if (count >= 6) return true;
+        // 限制走法数量
+        if (moves.size() > 50) {
+            moves = moves.subList(0, 50);
         }
-        return false;
+
+        return moves;
     }
 
-    // 寻找威胁点（对方的活4、冲4位置）
-    private List<Integer> findThreats(PieceColor color) {
-        List<Integer> threats = new ArrayList<>();
+    // 有效路估值
+    private int evaluate(PieceColor myColor) {
+        int myScore = 0, oppScore = 0;
+        PieceColor oppColor = myColor.opposite();
 
+        // 遍历所有可能的6连线（有效路）
         for (int pos = 0; pos < 361; pos++) {
-            if (board.get(pos) != PieceColor.EMPTY) continue;
-
             int col = pos % 19;
             int row = pos / 19;
 
             for (int[] dir : DIRECTIONS) {
-                int count = 0;
-                int empty = 0;
+                // 检查从pos开始的6格路
+                if (!validLine(col, row, dir)) continue;
 
-                // 检查该方向上的连子数
-                for (int k = -5; k <= 5; k++) {
+                int my = 0, opp = 0;
+                for (int k = 0; k < 6; k++) {
                     int nc = col + dir[0] * k;
                     int nr = row + dir[1] * k;
-                    if (nc < 0 || nc >= 19 || nr < 0 || nr >= 19) continue;
-
                     PieceColor c = board.get(nc * 19 + nr);
-                    if (c == color) count++;
-                    else if (c == PieceColor.EMPTY) empty++;
+                    if (c == myColor) my++;
+                    else if (c == oppColor) opp++;
                 }
 
-                // 如果有5个同色子且有空位，是威胁
-                if (count >= 5) {
-                    threats.add(pos);
-                    break;
+                // 有效路评分
+                if (opp == 0 && my > 0) {
+                    myScore += getPathScore(my);
                 }
-            }
-        }
-        return threats;
-    }
-
-    // 防守威胁
-    private Move defendThreats(List<Integer> threats, PieceColor myColor) {
-        if (threats.size() == 0) return null;
-
-        // 如果威胁点<=2，直接堵住
-        if (threats.size() <= 2) {
-            int pos1 = threats.get(0);
-            int pos2 = threats.size() > 1 ? threats.get(1) : findBestSingleMove(myColor, pos1);
-            return new Move(pos1, pos2);
-        }
-
-        // 威胁太多，尝试反击
-        return null;
-    }
-
-    // 找最佳单点
-    private int findBestSingleMove(PieceColor color, int exclude) {
-        int bestPos = -1;
-        int bestScore = -1;
-
-        for (int pos = 0; pos < 361; pos++) {
-            if (pos == exclude || board.get(pos) != PieceColor.EMPTY) continue;
-            int score = evaluatePosition(pos, color);
-            if (score > bestScore) {
-                bestScore = score;
-                bestPos = pos;
-            }
-        }
-        return bestPos;
-    }
-
-    // 智能选点
-    private Move findBestMove(PieceColor color) {
-        List<Integer> candidates = getCandidates();
-
-        int bestScore = Integer.MIN_VALUE;
-        Move bestMove = null;
-
-        for (int i = 0; i < candidates.size(); i++) {
-            int pos1 = candidates.get(i);
-            for (int j = i + 1; j < candidates.size(); j++) {
-                int pos2 = candidates.get(j);
-
-                int score = evaluatePosition(pos1, color) + evaluatePosition(pos2, color);
-                // 两子相邻加分
-                if (isAdjacent(pos1, pos2)) score += 50;
-
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestMove = new Move(pos1, pos2);
+                if (my == 0 && opp > 0) {
+                    oppScore += getPathScore(opp);
                 }
             }
         }
 
-        return bestMove;
+        return myScore - oppScore;
     }
 
-    // 获取候选点（已有棋子周围的空位）
+    // 有效路分数
+    private int getPathScore(int count) {
+        switch (count) {
+            case 6: return 1000000;
+            case 5: return 50000;
+            case 4: return 5000;
+            case 3: return 500;
+            case 2: return 50;
+            case 1: return 5;
+            default: return 0;
+        }
+    }
+
+    // 检查6格路是否在棋盘内
+    private boolean validLine(int col, int row, int[] dir) {
+        int endCol = col + dir[0] * 5;
+        int endRow = row + dir[1] * 5;
+        return endCol >= 0 && endCol < 19 && endRow >= 0 && endRow < 19;
+    }
+
+    // 获取候选点
     private List<Integer> getCandidates() {
         Set<Integer> candidates = new HashSet<>();
 
@@ -204,7 +206,6 @@ public class AI extends core.player.AI {
                 int col = pos % 19;
                 int row = pos / 19;
 
-                // 周围2格范围
                 for (int dc = -2; dc <= 2; dc++) {
                     for (int dr = -2; dr <= 2; dr++) {
                         int nc = col + dc;
@@ -223,50 +224,59 @@ public class AI extends core.player.AI {
         return new ArrayList<>(candidates);
     }
 
-    // 评估单点分数
-    private int evaluatePosition(int pos, PieceColor color) {
+    // 检查胜利
+    private boolean checkWin(int pos, PieceColor color) {
         int col = pos % 19;
         int row = pos / 19;
-        int score = 0;
 
-        // 中心位置加分
-        int centerDist = Math.abs(col - 9) + Math.abs(row - 9);
-        score += (18 - centerDist) * 2;
-
-        // 各方向棋型评估
         for (int[] dir : DIRECTIONS) {
-            int myCount = 0, oppCount = 0, empty = 0;
-
-            for (int k = -5; k <= 5; k++) {
-                if (k == 0) continue;
+            int count = 1;
+            for (int k = 1; k < 6; k++) {
                 int nc = col + dir[0] * k;
                 int nr = row + dir[1] * k;
-                if (nc < 0 || nc >= 19 || nr < 0 || nr >= 19) continue;
-
-                PieceColor c = board.get(nc * 19 + nr);
-                if (c == color) myCount++;
-                else if (c == color.opposite()) oppCount++;
-                else empty++;
+                if (nc < 0 || nc >= 19 || nr < 0 || nr >= 19) break;
+                if (board.get(nc * 19 + nr) != color) break;
+                count++;
             }
-
-            // 进攻分
-            if (oppCount == 0) {
-                score += myCount * myCount * 10;
+            for (int k = 1; k < 6; k++) {
+                int nc = col - dir[0] * k;
+                int nr = row - dir[1] * k;
+                if (nc < 0 || nc >= 19 || nr < 0 || nr >= 19) break;
+                if (board.get(nc * 19 + nr) != color) break;
+                count++;
             }
-            // 防守分
-            if (myCount == 0) {
-                score += oppCount * oppCount * 5;
-            }
+            if (count >= 6) return true;
         }
-
-        return score;
+        return false;
     }
 
-    // 判断两点是否相邻
-    private boolean isAdjacent(int pos1, int pos2) {
-        int c1 = pos1 % 19, r1 = pos1 / 19;
-        int c2 = pos2 % 19, r2 = pos2 / 19;
-        return Math.abs(c1 - c2) <= 1 && Math.abs(r1 - r2) <= 1;
+    // 下棋并更新哈希
+    private void makeMove(Move move) {
+        board.makeMove(move);
+        updateHash(move);
+    }
+
+    // 撤销并更新哈希
+    private void undoMove(Move move) {
+        PieceColor color = board.whoseMove(); // undo前的颜色
+        board.undo();
+        // 撤销哈希
+        int colorIdx = (color == PieceColor.BLACK) ? 1 : 2;
+        currentHash ^= zobristTable[move.index1()][colorIdx];
+        currentHash ^= zobristTable[move.index2()][colorIdx];
+        currentHash ^= zobristTable[move.index1()][0];
+        currentHash ^= zobristTable[move.index2()][0];
+    }
+
+    // 更新哈希
+    private void updateHash(Move move) {
+        if (move == null) return;
+        PieceColor color = board.get(move.index1());
+        int colorIdx = (color == PieceColor.BLACK) ? 1 : 2;
+        currentHash ^= zobristTable[move.index1()][0]; // 移除空
+        currentHash ^= zobristTable[move.index2()][0];
+        currentHash ^= zobristTable[move.index1()][colorIdx]; // 添加棋子
+        currentHash ^= zobristTable[move.index2()][colorIdx];
     }
 
     @Override
@@ -278,5 +288,9 @@ public class AI extends core.player.AI {
     public void playGame(Game game) {
         super.playGame(game);
         board = new Board();
+        currentHash = 0;
+        transTable.clear();
+        // 初始化中心黑子的哈希
+        currentHash ^= zobristTable[Move.index('J', 'J')][1];
     }
 }
