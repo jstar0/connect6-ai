@@ -35,9 +35,9 @@ public class AITester {
         //使用自己生成的AI棋手列表
         GameEvent event = new GameEvent("Carnival of Zeros", createPlayers());
 
-        //每对棋手下10局棋，先后手各5局（测试用，正式改回500）
-        //n个棋手，共下C(n,2)*10局棋，每个棋手下10*(n-1)局棋
-        event.carnivalRun(10);
+        //每对棋手下100局棋，先后手各50局
+        //n个棋手，共下C(n,2)*100局棋，每个棋手下100*(n-1)局棋
+        event.carnivalRun(100);
         event.showResults();
     }
 
