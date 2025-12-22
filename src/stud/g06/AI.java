@@ -34,8 +34,10 @@ public class AI extends core.player.AI {
 
     @Override
     public Move findNextMove(Move opponentMove) {
-        board.makeMove(opponentMove);
-        updateHash(opponentMove);
+        if (opponentMove != null) {
+            board.makeMove(opponentMove);
+            updateHash(opponentMove);
+        }
         startTime = System.currentTimeMillis();
 
         PieceColor myColor = board.whoseMove();
@@ -324,6 +326,5 @@ public class AI extends core.player.AI {
         board = new Board();
         currentHash = 0;
         transTable.clear();
-        currentHash ^= zobristTable[Move.index('J', 'J')][1];
     }
 }
