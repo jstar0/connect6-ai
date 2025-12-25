@@ -578,6 +578,36 @@ public class AI extends core.player.AI {
         }
     }
 
+    private void collectEmptyFromRoad(Road road, ArrayList<Integer> out, boolean[] visited, int[] weights, int delta) {
+        for (int i = 0; i < 6; i++) {
+            int pos = road.cellAt(i);
+            if (board.get(pos) != PieceColor.EMPTY) continue;
+            weights[pos] += delta;
+            if (visited[pos]) continue;
+            visited[pos] = true;
+            out.add(pos);
+        }
+    }
+
+    private ArrayList<Integer> collectThreatBlockPointsSorted(RoadSet oppFour, RoadSet oppFive, int[] weights) {
+        Arrays.fill(weights, 0);
+        boolean[] visited = new boolean[361];
+        ArrayList<Integer> blocks = new ArrayList<>();
+        for (Road road : oppFive) collectEmptyFromRoad(road, blocks, visited, weights, 6);
+        for (Road road : oppFour) collectEmptyFromRoad(road, blocks, visited, weights, 3);
+
+        blocks.sort((a, b) -> {
+            int wa = weights[a];
+            int wb = weights[b];
+            if (wa != wb) return Integer.compare(wb, wa);
+            int da = Math.abs(a / 19 - 9) + Math.abs(a % 19 - 9);
+            int db = Math.abs(b / 19 - 9) + Math.abs(b % 19 - 9);
+            if (da != db) return Integer.compare(da, db);
+            return Integer.compare(a, b);
+        });
+        return blocks;
+    }
+
     private List<Move> generateImmediateBlocks(PieceColor defender, int threatLevel, long deadlineMs) {
         BoardPro bp = boardPro();
         if (bp == null) return List.of();
@@ -587,33 +617,42 @@ public class AI extends core.player.AI {
         RoadSet oppFour = (defender == PieceColor.WHITE) ? byCount[4][0] : byCount[0][4];
         RoadSet oppFive = (defender == PieceColor.WHITE) ? byCount[5][0] : byCount[0][5];
 
-        boolean[] visited = new boolean[361];
-        ArrayList<Integer> blocks = new ArrayList<>();
-        for (Road road : oppFive) collectEmptyFromRoad(road, blocks, visited);
-        for (Road road : oppFour) collectEmptyFromRoad(road, blocks, visited);
-
+        int[] weights = new int[361];
+        ArrayList<Integer> blocks = collectThreatBlockPointsSorted(oppFour, oppFive, weights);
         if (blocks.isEmpty()) return List.of();
 
+        List<Integer> seconds = findPotentialSpots(defender);
+        int secondsLimit = Math.min(seconds.size(), 14);
+
         ArrayList<ScoredMove> scored = new ArrayList<>();
+
         if (blocks.size() == 1) {
             int p1 = blocks.get(0);
+            if (board.get(p1) != PieceColor.EMPTY) return List.of();
+
+            roadTable.applyStone(p1, defender);
             int added = 0;
-            for (int p2 : getCandidates()) {
+            for (int i = 0; i < secondsLimit; i++) {
                 if (System.currentTimeMillis() > deadlineMs) break;
+                int p2 = seconds.get(i);
                 if (p2 == p1) continue;
-                Move m = new Move(p1, p2);
-                board.makeMove(m);
-                boolean solved = bp.countAllThreats(defender) == 0;
-                int counter = bp.countAllThreats(defender.opposite());
-                int score = solved ? counter * 1_000_000 + evalFromRoadTable(defender, roadTable) : -INF;
-                board.undo();
-                if (solved) scored.add(new ScoredMove(m, score));
-                if (++added >= 8) break;
+                if (board.get(p2) != PieceColor.EMPTY) continue;
+
+                roadTable.applyStone(p2, defender);
+                boolean solved = oppFour.isEmpty() && oppFive.isEmpty();
+                int score = solved ? evalFromRoadTable(defender, roadTable) : -INF;
+                roadTable.revertStone(p2, defender);
+
+                if (solved) scored.add(new ScoredMove(new Move(p1, p2), score));
+                if (++added >= 10) break;
             }
+            roadTable.revertStone(p1, defender);
         } else if (threatLevel == 1) {
             ArrayList<Integer> singleBlocks = new ArrayList<>();
-            for (int p : blocks) {
+            int scanLimit = Math.min(blocks.size(), 24);
+            for (int i = 0; i < scanLimit; i++) {
                 if (System.currentTimeMillis() > deadlineMs) break;
+                int p = blocks.get(i);
                 if (board.get(p) != PieceColor.EMPTY) continue;
                 roadTable.applyStone(p, defender);
                 boolean solved = oppFour.isEmpty() && oppFive.isEmpty();
@@ -621,42 +660,55 @@ public class AI extends core.player.AI {
                 if (solved) singleBlocks.add(p);
             }
 
-            int blockLimit = Math.min(singleBlocks.size(), 6);
+            int blockLimit = Math.min(singleBlocks.size(), 8);
             for (int i = 0; i < blockLimit; i++) {
+                if (System.currentTimeMillis() > deadlineMs) break;
                 int p1 = singleBlocks.get(i);
+                roadTable.applyStone(p1, defender);
                 int added = 0;
-                for (int p2 : getCandidates()) {
+                for (int j = 0; j < secondsLimit; j++) {
                     if (System.currentTimeMillis() > deadlineMs) break;
+                    int p2 = seconds.get(j);
                     if (p2 == p1) continue;
-                    Move m = new Move(p1, p2);
-                    board.makeMove(m);
-                    boolean solved = bp.countAllThreats(defender) == 0;
-                    int counter = bp.countAllThreats(defender.opposite());
-                    int score = solved ? counter * 1_000_000 + evalFromRoadTable(defender, roadTable) : -INF;
-                    board.undo();
-                    if (solved) scored.add(new ScoredMove(m, score));
-                    if (++added >= 6) break;
+                    if (board.get(p2) != PieceColor.EMPTY) continue;
+
+                    roadTable.applyStone(p2, defender);
+                    boolean solved = oppFour.isEmpty() && oppFive.isEmpty();
+                    int score = solved ? evalFromRoadTable(defender, roadTable) : -INF;
+                    roadTable.revertStone(p2, defender);
+
+                    if (solved) scored.add(new ScoredMove(new Move(p1, p2), score));
+                    if (++added >= 8) break;
                 }
+                roadTable.revertStone(p1, defender);
             }
         } else {
-            for (int i = 0; i < blocks.size(); i++) {
-                for (int j = i + 1; j < blocks.size(); j++) {
-                    if (System.currentTimeMillis() > deadlineMs) break;
-                    Move m = new Move(blocks.get(i), blocks.get(j));
-                    board.makeMove(m);
-                    boolean solved = bp.countAllThreats(defender) == 0;
-                    int counter = bp.countAllThreats(defender.opposite());
-                    int score = solved ? counter * 1_000_000 + evalFromRoadTable(defender, roadTable) : -INF;
-                    board.undo();
-                    if (solved) scored.add(new ScoredMove(m, score));
-                }
+            int pointLimit = Math.min(blocks.size(), 26);
+            for (int i = 0; i < pointLimit; i++) {
                 if (System.currentTimeMillis() > deadlineMs) break;
+                int p1 = blocks.get(i);
+                if (board.get(p1) != PieceColor.EMPTY) continue;
+
+                roadTable.applyStone(p1, defender);
+                for (int j = i + 1; j < pointLimit; j++) {
+                    if (System.currentTimeMillis() > deadlineMs) break;
+                    int p2 = blocks.get(j);
+                    if (board.get(p2) != PieceColor.EMPTY) continue;
+
+                    roadTable.applyStone(p2, defender);
+                    boolean solved = oppFour.isEmpty() && oppFive.isEmpty();
+                    int score = solved ? evalFromRoadTable(defender, roadTable) : -INF;
+                    roadTable.revertStone(p2, defender);
+
+                    if (solved) scored.add(new ScoredMove(new Move(p1, p2), score));
+                }
+                roadTable.revertStone(p1, defender);
             }
         }
 
         scored.sort((a, b) -> b.score - a.score);
         ArrayList<Move> result = new ArrayList<>();
-        int limit = Math.min(scored.size(), 20);
+        int limit = Math.min(scored.size(), 12);
         for (int i = 0; i < limit; i++) result.add(scored.get(i).move);
         return result;
     }
@@ -670,10 +722,8 @@ public class AI extends core.player.AI {
         RoadSet oppFour = (defender == PieceColor.WHITE) ? byCount[4][0] : byCount[0][4];
         RoadSet oppFive = (defender == PieceColor.WHITE) ? byCount[5][0] : byCount[0][5];
 
-        boolean[] visited = new boolean[361];
-        ArrayList<Integer> blocks = new ArrayList<>();
-        for (Road road : oppFive) collectEmptyFromRoad(road, blocks, visited);
-        for (Road road : oppFour) collectEmptyFromRoad(road, blocks, visited);
+        int[] weights = new int[361];
+        ArrayList<Integer> blocks = collectThreatBlockPointsSorted(oppFour, oppFive, weights);
 
         if (blocks.isEmpty()) return null;
         if (blocks.size() == 1) {
@@ -681,50 +731,76 @@ public class AI extends core.player.AI {
             Move bestMove = null;
             int bestScore = -INF;
             int tried = 0;
-            for (int p2 : findPotentialSpots(defender)) {
+            List<Integer> seconds = findPotentialSpots(defender);
+            int secondsLimit = Math.min(seconds.size(), 24);
+
+            roadTable.applyStone(p1, defender);
+            for (int i = 0; i < secondsLimit; i++) {
+                if (System.currentTimeMillis() > deadlineMs) break;
+                int p2 = seconds.get(i);
                 if (p2 == p1) continue;
-                Move m = new Move(p1, p2);
-                board.makeMove(m);
-                boolean solved = bp.countAllThreats(defender) == 0;
-                int counter = bp.countAllThreats(defender.opposite());
-                int score = solved ? counter * 1_000_000 + evalFromRoadTable(defender, roadTable) : -INF;
-                board.undo();
+                if (board.get(p2) != PieceColor.EMPTY) continue;
+
+                roadTable.applyStone(p2, defender);
+                boolean solved = oppFour.isEmpty() && oppFive.isEmpty();
+                int score = solved ? evalFromRoadTable(defender, roadTable) : -INF;
+                roadTable.revertStone(p2, defender);
+
                 if (solved && score > bestScore) {
                     bestScore = score;
-                    bestMove = m;
+                    bestMove = new Move(p1, p2);
                 }
                 if (++tried >= 10) break;
             }
+            roadTable.revertStone(p1, defender);
             return bestMove != null ? bestMove : new Move(p1, getBest(p1, defender));
         }
 
-        int threatLevel = bp.countAllThreats(defender);
-        if (threatLevel == 1) {
-            Move best = findBestSingleThreatDefense(defender, blocks, roadTable, oppFour, oppFive, deadlineMs);
-            if (best != null) return best;
-        }
+        Move bestSingle = findBestSingleThreatDefense(defender, blocks, roadTable, oppFour, oppFive, deadlineMs);
+        if (bestSingle != null) return bestSingle;
 
-        Move bestMove = null;
-        int bestScore = -INF;
+        Move bestSolved = null;
+        int bestSolvedScore = -INF;
+        Move bestPartial = null;
+        int bestThreatMetric = Integer.MAX_VALUE;
+        int bestPartialScore = -INF;
 
-        for (int i = 0; i < blocks.size(); i++) {
-            for (int j = i + 1; j < blocks.size(); j++) {
+        int pointLimit = Math.min(blocks.size(), 34);
+        for (int i = 0; i < pointLimit; i++) {
+            if (System.currentTimeMillis() > deadlineMs) break;
+            int p1 = blocks.get(i);
+            if (board.get(p1) != PieceColor.EMPTY) continue;
+
+            roadTable.applyStone(p1, defender);
+            for (int j = i + 1; j < pointLimit; j++) {
                 if (System.currentTimeMillis() > deadlineMs) break;
-                Move m = new Move(blocks.get(i), blocks.get(j));
-                board.makeMove(m);
-                boolean solved = bp.countAllThreats(defender) == 0;
-                int counter = bp.countAllThreats(defender.opposite());
-                int score = solved ? counter * 1_000_000 + evalFromRoadTable(defender, roadTable) : -INF;
-                board.undo();
-                if (solved && score > bestScore) {
-                    bestScore = score;
-                    bestMove = m;
+                int p2 = blocks.get(j);
+                if (board.get(p2) != PieceColor.EMPTY) continue;
+
+                roadTable.applyStone(p2, defender);
+                int threatMetric = oppFive.size() * 1000 + oppFour.size();
+                int score = evalFromRoadTable(defender, roadTable);
+                boolean solved = threatMetric == 0;
+                roadTable.revertStone(p2, defender);
+
+                if (solved) {
+                    if (score > bestSolvedScore) {
+                        bestSolvedScore = score;
+                        bestSolved = new Move(p1, p2);
+                    }
+                } else {
+                    if (threatMetric < bestThreatMetric || (threatMetric == bestThreatMetric && score > bestPartialScore)) {
+                        bestThreatMetric = threatMetric;
+                        bestPartialScore = score;
+                        bestPartial = new Move(p1, p2);
+                    }
                 }
             }
-            if (System.currentTimeMillis() > deadlineMs) break;
+            roadTable.revertStone(p1, defender);
         }
 
-        return bestMove;
+        if (bestSolved != null) return bestSolved;
+        return bestPartial != null ? bestPartial : new Move(blocks.get(0), getBest(blocks.get(0), defender));
     }
 
     private Move findBestSingleThreatDefense(
@@ -756,23 +832,23 @@ public class AI extends core.player.AI {
         int bestScore = -INF;
         for (int p1 : singleBlocks) {
             int tried = 0;
+            roadTable.applyStone(p1, defender);
             for (int i = 0; i < secondsLimit; i++) {
                 if (System.currentTimeMillis() > deadlineMs) break;
                 int p2 = seconds.get(i);
                 if (p2 == p1) continue;
                 if (board.get(p2) != PieceColor.EMPTY) continue;
-                Move m = new Move(p1, p2);
-                board.makeMove(m);
-                boolean stillSolved = bp.countAllThreats(defender) == 0;
-                int counter = bp.countAllThreats(defender.opposite());
-                int score = stillSolved ? counter * 1_000_000 + evalFromRoadTable(defender, roadTable) : -INF;
-                board.undo();
+                roadTable.applyStone(p2, defender);
+                boolean stillSolved = oppFour.isEmpty() && oppFive.isEmpty();
+                int score = stillSolved ? evalFromRoadTable(defender, roadTable) : -INF;
+                roadTable.revertStone(p2, defender);
                 if (stillSolved && score > bestScore) {
                     bestScore = score;
-                    bestMove = m;
+                    bestMove = new Move(p1, p2);
                 }
                 if (++tried >= 10) break;
             }
+            roadTable.revertStone(p1, defender);
         }
         return bestMove;
     }
