@@ -37,7 +37,11 @@ public class G06vsG07 {
         Player opponent = tryLoadPlayer(opponentClass);
         if (opponent == null) {
             opponentClass = "stud.g07.AI";
-            opponent = new stud.g07.AI();
+            opponent = tryLoadPlayer(opponentClass);
+        }
+        if (opponent == null) {
+            System.err.println("Cannot load opponent: " + opponentClass);
+            return;
         }
         players.add(opponent);
 

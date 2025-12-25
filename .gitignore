@@ -18,3 +18,14 @@ KatagomoConnect6_20250505_OpenCL-only/
 KatagomoConnect6_OpenCL.7z
 参考/
 1-s2.0-S1875952124000752-main.pdf
+
+# Local opponent sources (often extracted from group/league bundles)
+# Keep untracked to avoid accidentally publishing other teams' code.
+src/stud/g02/
+src/stud/g12/
+src/stud/g22/
+
+# Local experiments / scratch files
+src/stud/g06/AI_V3.java
+src/stud/g06/DebugTest.java
+src/stud/g06/TestSingle.java
