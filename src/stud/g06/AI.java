@@ -1122,6 +1122,7 @@ public class AI extends core.player.AI {
         if (bp == null) return genMoves(me);
 
         RoadTable roadTable = bp.getRoadTable();
+        RoadSet[][] byCount = roadTable.getRoadsByCount();
         ArrayList<int[]> points = new ArrayList<>();
         for (int pos : getCandidates()) {
             roadTable.applyStone(pos, me);
@@ -1141,7 +1142,14 @@ public class AI extends core.player.AI {
                 int b = points.get(j)[0];
                 roadTable.applyStone(a, me);
                 roadTable.applyStone(b, me);
-                int score = evalFromRoadTable(me, roadTable);
+                int threatRoads;
+                if (me == PieceColor.BLACK) {
+                    threatRoads = byCount[4][0].size() + byCount[5][0].size();
+                } else {
+                    threatRoads = byCount[0][4].size() + byCount[0][5].size();
+                }
+                int threatBonus = Math.min(threatRoads, 3) * 1_000_000;
+                int score = evalFromRoadTable(me, roadTable) + threatBonus;
                 roadTable.revertStone(b, me);
                 roadTable.revertStone(a, me);
                 scored.add(new ScoredMove(new Move(a, b), score));
@@ -1150,21 +1158,9 @@ public class AI extends core.player.AI {
 
         scored.sort((a, b) -> b.score - a.score);
 
-        // Light tactical bias: prefer moves that immediately create higher threat pressure.
         int limit = Math.min(scored.size(), 35);
-        ArrayList<ScoredMove> tuned = new ArrayList<>(limit);
-        for (int i = 0; i < limit; i++) {
-            Move m = scored.get(i).move;
-            int base = scored.get(i).score;
-            board.makeMove(m);
-            int threatLevel = bp.countAllThreats(me.opposite());
-            board.undo();
-            tuned.add(new ScoredMove(m, base + threatLevel * 1_000_000));
-        }
-
-        tuned.sort((a, b) -> b.score - a.score);
-        ArrayList<Move> moves = new ArrayList<>(tuned.size());
-        for (ScoredMove m : tuned) moves.add(m.move);
+        ArrayList<Move> moves = new ArrayList<>(limit);
+        for (int i = 0; i < limit; i++) moves.add(scored.get(i).move);
         return moves.isEmpty() ? genMoves(me) : moves;
     }
 
