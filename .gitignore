@@ -12,3 +12,9 @@ out/
 
 # Project specific
 lib/
+
+# Large local reference engines / archives (not part of the assignment deliverable)
+KatagomoConnect6_20250505_OpenCL-only/
+KatagomoConnect6_OpenCL.7z
+参考/
+1-s2.0-S1875952124000752-main.pdf

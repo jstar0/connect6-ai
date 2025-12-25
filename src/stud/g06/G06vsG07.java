@@ -7,21 +7,42 @@ import core.player.Player;
 import java.util.ArrayList;
 
 /**
- * G06 vs G07 对战测试
- * G06: TBS + PVS + Alpha-Beta
- * G07: MCTS
+ * Quick head-to-head match runner for G06.
+ *
+ * <p>Usage:
+ * <ul>
+ *   <li>No args: try {@code stud.g02.AI} (if present), otherwise fall back to {@code stud.g07.AI}</li>
+ *   <li>Args: {@code <opponentClassName> <games>}</li>
+ * </ul>
  */
 public class G06vsG07 {
+    private static Player tryLoadPlayer(String className) {
+        try {
+            Class<?> clazz = Class.forName(className);
+            return (Player) clazz.getDeclaredConstructor().newInstance();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     public static void main(String[] args) {
         Configuration.GUI = false;
 
-        ArrayList<Player> players = new ArrayList<>();
-        players.add(new stud.g06.AI());  // 我们的AI
-        players.add(new stud.g07.AI());  // G07的MCTS AI
+        String opponentClass = args.length >= 1 ? args[0] : "stud.g02.AI";
+        int games = args.length >= 2 ? Integer.parseInt(args[1]) : 10;
 
-        GameEvent event = new GameEvent("G06 vs G07", players);
-        // 10场对战
-        event.carnivalRun(10);
+        ArrayList<Player> players = new ArrayList<>();
+        players.add(new stud.g06.AI());   // current version
+
+        Player opponent = tryLoadPlayer(opponentClass);
+        if (opponent == null) {
+            opponentClass = "stud.g07.AI";
+            opponent = new stud.g07.AI();
+        }
+        players.add(opponent);
+
+        GameEvent event = new GameEvent("G06 vs " + opponentClass, players);
+        event.carnivalRun(games);
         event.showResults();
     }
 }
