@@ -41,9 +41,9 @@ public class AI extends core.player.AI {
     private static final int ROOT_PARALLEL_THREADS =
             parseIntProperty(
                     "g06.threads",
-                    Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors())),
+                    Math.max(1, Math.min(8, Runtime.getRuntime().availableProcessors())),
                     1,
-                    4);
+                    16);
 
     private static final ExecutorService ROOT_POOL =
             (ROOT_PARALLEL_THREADS > 1)
