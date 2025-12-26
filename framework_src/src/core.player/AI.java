@@ -18,7 +18,7 @@ public abstract class AI extends Player {
 		return false;
 	}
 
-	public final Move firstMove() {
+	public Move firstMove() {
 		Random rand = new Random();
 		int index = rand.nextInt(firstMoves.length);
 		return firstMoves[index];
