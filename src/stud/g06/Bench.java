@@ -39,8 +39,7 @@ public final class Bench {
     public static void main(String[] args) {
         Configuration.GUI = false;
 
-        boolean opponentProvided = args.length >= 1;
-        String opponentClass = opponentProvided ? args[0] : "stud.g02.AI";
+        String opponentClass = args.length >= 1 ? args[0] : "stud.g02.AI";
         int games = args.length >= 2 ? parseInt(args[1], 10) : 10;
         int procs = args.length >= 3 ? parseInt(args[2], 1) : 1;
 
@@ -49,14 +48,17 @@ public final class Bench {
         int g06Threads =
                 args.length >= 4 ? parseInt(args[3], defaultThreads) : defaultThreads;
 
-        if (!opponentProvided) {
-            // Backwards-compatible behavior: try g02 first, fall back to g07.
-            if (!canLoadPlayer(opponentClass)) {
-                opponentClass = "stud.g07.AI";
+        // Backwards-compatible behavior: if the requested opponent cannot be loaded,
+        // fall back to g07 (when available).
+        if (!canLoadPlayer(opponentClass)) {
+            String fallback = "stud.g07.AI";
+            if (!opponentClass.equals(fallback) && canLoadPlayer(fallback)) {
+                System.err.println("Cannot load opponent: " + opponentClass + " (fallback to " + fallback + ")");
+                opponentClass = fallback;
+            } else {
+                System.err.println("Cannot load opponent: " + opponentClass);
+                System.exit(2);
             }
-        } else if (!canLoadPlayer(opponentClass)) {
-            System.err.println("Cannot load opponent: " + opponentClass);
-            System.exit(2);
         }
 
         procs = Math.max(1, procs);
