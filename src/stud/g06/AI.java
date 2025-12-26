@@ -1686,6 +1686,7 @@ public class AI extends core.player.AI {
         board = new BoardPro();
         hash = 0;
         hashSynced = false;
+        threatCacheHash = -1;
         tt.clear();
     }
 
