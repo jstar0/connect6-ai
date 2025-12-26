@@ -191,7 +191,7 @@ public final class Bench {
                             + stats.games);
         }
         System.out.println(
-                "\tGame Statistics (" + g06Name + " vs " + oppName + "): " + format(totalScore));
+                "\tGame Statistics (" + g06Name + " vs " + oppName + "): " + format(stats.games));
         System.out.println(
                 "\t\t先手：\twin: "
                         + format(firstWin)
