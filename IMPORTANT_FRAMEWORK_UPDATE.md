@@ -20,5 +20,9 @@
 ## 对 aiDeveloper / oucLeague 的要求
 老师要求：请用新的 `aiFramework.jar` 替换掉 `AiDeveloper.zip` 与 `oucLeague.zip` 中 `lib/` 目录下的旧 `aiFramework.jar`。
 
+本仓库对应文件位置：
+- `项目2相关资料/AiDeveloper.zip`（已更新内部的 `lib/aiFramework.jar`，并同步更新 `out/artifacts/AiDeveloper_jar/aiFramework.jar`）
+- `项目2相关资料/oucLeague.zip`（已更新内部的 `lib/aiFramework.jar`）
+
 ## 对我们（G06）的直接影响
 现在 **不必再被“随机开局库”限制**：`src/stud/g06/AI.java` 可以直接 `@Override public Move firstMove()` 来控制第一手走法（关键术语：`firstMove` / `final` / `override`）。
