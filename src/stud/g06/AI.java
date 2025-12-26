@@ -6,6 +6,8 @@ import core.game.Game;
 import core.game.Move;
 
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * G06 AI (tactical optimized V3)
@@ -36,17 +38,54 @@ public class AI extends core.player.AI {
     private static final int DTSS_MAX_POINTS = 32;
     private static final int DTSS_MAX_MOVES = 80;
 
+    private static final int ROOT_PARALLEL_THREADS =
+            parseIntProperty(
+                    "g06.threads",
+                    Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors())),
+                    1,
+                    4);
+
+    private static final ExecutorService ROOT_POOL =
+            (ROOT_PARALLEL_THREADS > 1)
+                    ? Executors.newFixedThreadPool(
+                            ROOT_PARALLEL_THREADS,
+                            new ThreadFactory() {
+                                private final AtomicInteger id = new AtomicInteger(1);
+
+                                @Override
+                                public Thread newThread(Runnable r) {
+                                    Thread t = new Thread(r);
+                                    t.setDaemon(true);
+                                    t.setName("G06-Root-" + id.getAndIncrement());
+                                    return t;
+                                }
+                            })
+                    : null;
+
+    private static final ThreadLocal<AI> ROOT_WORKER = ThreadLocal.withInitial(AI::new);
+
     private PieceColor dtssAttacker;
     private ArrayList<Move> dtssLine;
     private Move dtssBestMove;
     private long dtssDeadlineMs;
     private boolean dtssTimedOut;
 
+    private long hardDeadlineMs;
+    private long nodeCounter;
+
     public AI() {
         Random r = new Random(12345);
         for (int i = 0; i < 361; i++)
             for (int j = 0; j < 3; j++)
                 zobrist[i][j] = r.nextLong();
+    }
+
+    @Override
+    public Move firstMove() {
+        // With the updated framework, firstMove() is overridable. Use our own deterministic opening.
+        PieceColor me = (board != null) ? board.whoseMove() : PieceColor.WHITE;
+        List<Move> moves = genMovesRoot(me);
+        return moves.isEmpty() ? super.firstMove() : moves.get(0);
     }
 
     @Override
@@ -57,6 +96,8 @@ public class AI extends core.player.AI {
         }
         syncHashIfNeeded();
         startTime = System.currentTimeMillis();
+        hardDeadlineMs = startTime + TIME_LIMIT - 200;
+        nodeCounter = 0;
         PieceColor me = board.whoseMove();
         PieceColor opp = me.opposite();
 
@@ -1085,27 +1126,114 @@ public class AI extends core.player.AI {
             Move iterBest = moves.get(0);
             int iterBestScore = -INF;
 
-            for (int i = 0; i < moves.size(); i++) {
-                if (System.currentTimeMillis() - startTime > TIME_LIMIT - 500) break;
+            // Always evaluate the current PV first (full-window).
+            Move pv = moves.get(0);
+            makeMove(pv);
+            int pvScore = -negamax(depth - 1, -beta, -alpha);
+            undoMove(pv);
+            iterBest = pv;
+            iterBestScore = pvScore;
+            alpha = Math.max(alpha, pvScore);
 
-                Move m = moves.get(i);
-                makeMove(m);
-                int score;
-                if (i == 0) {
-                    score = -negamax(depth - 1, -beta, -alpha);
-                } else {
-                    score = -negamax(depth - 1, -alpha - 1, -alpha);
+            boolean useParallel =
+                    ROOT_POOL != null
+                            && moves.size() >= 8
+                            && (hardDeadlineMs - System.currentTimeMillis() > 900);
+
+            if (useParallel) {
+                BoardPro baseSnapshot = copyBoardPro();
+                long baseHash = hash;
+                int baselineAlpha = alpha;
+
+                long remainingMs = hardDeadlineMs - System.currentTimeMillis();
+                long scoutBudgetMs = Math.min(remainingMs - 250, 750);
+                int limit = rootParallelMoveLimit(depth, moves.size());
+
+                if (scoutBudgetMs > 0 && limit > 1) {
+                    final int searchDepth = depth;
+                    ArrayList<Callable<ScoredMove>> tasks = new ArrayList<>();
+                    for (int i = 1; i < limit; i++) {
+                        Move m = moves.get(i);
+                        tasks.add(
+                                () ->
+                                        scoutRootMove(
+                                                baseSnapshot, baseHash, m, searchDepth, baselineAlpha));
+                    }
+
+                    ArrayList<ScoredMove> results = new ArrayList<>();
+                    try {
+                        List<Future<ScoredMove>> futures =
+                                ROOT_POOL.invokeAll(tasks, scoutBudgetMs, TimeUnit.MILLISECONDS);
+                        for (Future<ScoredMove> f : futures) {
+                            if (f.isCancelled()) continue;
+                            try {
+                                ScoredMove sm = f.get();
+                                if (sm != null) results.add(sm);
+                            } catch (ExecutionException ignored) {
+                            }
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+
+                    results.sort((a, b) -> b.score - a.score);
+                    for (ScoredMove sm : results) {
+                        if (System.currentTimeMillis() > hardDeadlineMs - 120) break;
+                        if (sm.score <= alpha) break;
+
+                        Move m = sm.move;
+                        makeMove(m);
+                        int score = -negamax(depth - 1, -beta, -alpha);
+                        undoMove(m);
+
+                        if (score > iterBestScore) {
+                            iterBestScore = score;
+                            iterBest = m;
+                        }
+                        alpha = Math.max(alpha, score);
+                    }
+                }
+
+                // If there is still time, finish scanning remaining moves sequentially (cheap for shallow depths).
+                if (limit < moves.size()
+                        && depth <= 6
+                        && (hardDeadlineMs - System.currentTimeMillis() > 900)) {
+                    for (int i = limit; i < moves.size(); i++) {
+                        if (System.currentTimeMillis() - startTime > TIME_LIMIT - 500) break;
+
+                        Move m = moves.get(i);
+                        makeMove(m);
+                        int score = -negamax(depth - 1, -alpha - 1, -alpha);
+                        if (score > alpha && score < beta) {
+                            score = -negamax(depth - 1, -beta, -alpha);
+                        }
+                        undoMove(m);
+
+                        if (score > iterBestScore) {
+                            iterBestScore = score;
+                            iterBest = m;
+                        }
+                        alpha = Math.max(alpha, score);
+                    }
+                }
+            } else {
+                for (int i = 1; i < moves.size(); i++) {
+                    if (System.currentTimeMillis() - startTime > TIME_LIMIT - 500) break;
+
+                    Move m = moves.get(i);
+                    makeMove(m);
+                    int score = -negamax(depth - 1, -alpha - 1, -alpha);
                     if (score > alpha && score < beta) {
                         score = -negamax(depth - 1, -beta, -alpha);
                     }
-                }
-                undoMove(m);
+                    undoMove(m);
 
-                if (score > iterBestScore) {
-                    iterBestScore = score;
-                    iterBest = m;
+                    if (score > iterBestScore) {
+                        iterBestScore = score;
+                        iterBest = m;
+                    }
+                    alpha = Math.max(alpha, score);
                 }
-                alpha = Math.max(alpha, score);
             }
 
             best = iterBest;
@@ -1115,6 +1243,35 @@ public class AI extends core.player.AI {
             moves.sort((a, b) -> a.equals(fb) ? -1 : b.equals(fb) ? 1 : 0);
         }
         return best;
+    }
+
+    private static int rootParallelMoveLimit(int depth, int movesSize) {
+        int cap;
+        if (depth <= 4) cap = 24;
+        else if (depth <= 6) cap = 20;
+        else if (depth <= 8) cap = 16;
+        else cap = 12;
+        return Math.min(movesSize, cap);
+    }
+
+    private ScoredMove scoutRootMove(
+            BoardPro baseSnapshot, long baseHash, Move move, int depth, int alpha) {
+        // Clear stale interrupts from previous timed-out tasks on this worker thread.
+        Thread.interrupted();
+
+        AI worker = ROOT_WORKER.get();
+        worker.board = new BoardPro(baseSnapshot);
+        worker.hash = baseHash;
+        worker.hashSynced = true;
+        worker.startTime = startTime;
+        worker.hardDeadlineMs = hardDeadlineMs;
+        worker.nodeCounter = 0;
+        worker.threatCacheHash = -1;
+
+        worker.makeMove(move);
+        int score = -worker.negamax(depth - 1, -alpha - 1, -alpha);
+        worker.undoMove(move);
+        return new ScoredMove(move, score);
     }
 
     private List<Move> genMovesRoot(PieceColor me) {
@@ -1167,6 +1324,12 @@ public class AI extends core.player.AI {
     private int negamax(int depth, int alpha, int beta) {
         PieceColor me = board.whoseMove();
         PieceColor opp = me.opposite();
+
+        if ((++nodeCounter & 1023) == 0) {
+            if (System.currentTimeMillis() > hardDeadlineMs || Thread.currentThread().isInterrupted()) {
+                return eval(me);
+            }
+        }
 
         // Terminal: previous move already ended the game.
         if (board.gameOver()) return -INF + (20 - depth);
@@ -1504,6 +1667,16 @@ public class AI extends core.player.AI {
         return (board instanceof BoardPro) ? (BoardPro) board : null;
     }
 
+    private BoardPro copyBoardPro() {
+        BoardPro bp = boardPro();
+        if (bp != null) return new BoardPro(bp);
+        BoardPro copy = new BoardPro();
+        for (Move mv : board.getMoveList()) {
+            copy.makeMove(mv);
+        }
+        return copy;
+    }
+
     @Override
     public String name() { return "G06"; }
 
@@ -1514,5 +1687,18 @@ public class AI extends core.player.AI {
         hash = 0;
         hashSynced = false;
         tt.clear();
+    }
+
+    private static int parseIntProperty(String key, int defaultValue, int min, int max) {
+        String raw = System.getProperty(key);
+        if (raw == null || raw.isBlank()) return defaultValue;
+        try {
+            int v = Integer.parseInt(raw.trim());
+            if (v < min) return min;
+            if (v > max) return max;
+            return v;
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
     }
 }

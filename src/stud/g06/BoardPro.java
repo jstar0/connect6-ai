@@ -5,6 +5,7 @@ import core.board.PieceColor;
 import core.game.Move;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 
 public final class BoardPro extends Board {
     private final RoadTable roadTable = new RoadTable();
@@ -13,6 +14,20 @@ public final class BoardPro extends Board {
     public BoardPro() {
         super();
         updateBattleForMove(180);
+    }
+
+    public BoardPro(BoardPro src) {
+        super(src);
+        getMoveList().addAll(src.getMoveList());
+
+        roadTable.reset();
+        Arrays.fill(battle, 0);
+        for (int pos = 0; pos < 361; pos++) {
+            PieceColor c = get(pos);
+            if (c == PieceColor.EMPTY) continue;
+            if (pos != 180) roadTable.applyStone(pos, c);
+            updateBattleForMove(pos);
+        }
     }
 
     public RoadTable getRoadTable() {
