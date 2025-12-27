@@ -2,12 +2,15 @@ package stud.g06;
 
 import core.game.Game;
 import core.game.GameResult;
+import core.game.Move;
 import core.game.ui.Configuration;
 import core.player.Player;
 
+import java.lang.reflect.Field;
 import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Single-process match runner without busy-wait (joins the game thread).
@@ -58,9 +61,35 @@ public final class BenchWorker {
         }
 
         MatchStats stats = new MatchStats();
+        String side =
+                System.getProperty("bench.side", "both").trim().toLowerCase(Locale.ROOT);
+        boolean dumpOpenings = Boolean.parseBoolean(System.getProperty("bench.dumpOpenings", "false"));
+        int dumpMoves = 2;
+        try {
+            dumpMoves = Integer.parseInt(System.getProperty("bench.dumpMoves", "2"));
+        } catch (NumberFormatException ignored) {
+            dumpMoves = 2;
+        }
+        Field movesField = null;
+        if (dumpOpenings) {
+            try {
+                movesField = GameResult.class.getDeclaredField("moves");
+                movesField.setAccessible(true);
+            } catch (ReflectiveOperationException ignored) {
+                movesField = null;
+                err.println("bench.dumpOpenings requested but GameResult#moves is not accessible.");
+            }
+        }
 
         for (int i = 0; i < games; i++) {
-            boolean g06First = (i % 2 == 0);
+            boolean g06First;
+            if ("first".equals(side)) {
+                g06First = true;
+            } else if ("second".equals(side)) {
+                g06First = false;
+            } else {
+                g06First = (i % 2 == 0);
+            }
             Player first = g06First ? clonePlayer(g06Template) : clonePlayer(oppTemplate);
             Player second = g06First ? clonePlayer(oppTemplate) : clonePlayer(g06Template);
 
@@ -81,6 +110,30 @@ public final class BenchWorker {
                 return null;
             }
             GameResult last = results.get(results.size() - 1);
+
+            if (dumpOpenings && movesField != null) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    ArrayList<Move> moves = (ArrayList<Move>) movesField.get(last);
+                    if (moves != null && !moves.isEmpty()) {
+                        StringBuilder seq = new StringBuilder();
+                        int limit = Math.min(Math.max(1, dumpMoves), moves.size());
+                        for (int k = 0; k < limit; k++) {
+                            if (k > 0) seq.append(',');
+                            seq.append(moves.get(k));
+                        }
+                        err.println(
+                                "OPENING game="
+                                        + i
+                                        + " g06First="
+                                        + g06First
+                                        + " moves="
+                                        + seq);
+                    }
+                } catch (IllegalAccessException ignored) {
+                }
+            }
+
             int score = last.score(g06Player.name());
             if (score < 0 || score > 2) {
                 err.println("Unexpected score: " + score);
@@ -112,4 +165,3 @@ public final class BenchWorker {
         }
     }
 }
-
