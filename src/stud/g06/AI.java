@@ -23,9 +23,15 @@ public class AI extends core.player.AI {
     private static final int[] ROAD_SCORE = {0, 9, 520, 2070, 7890, 10020, 1000000};
     private static final int[] ROAD_SCORE_DEF = {0, 3, 480, 2670, 3887, 4900, 1000000};
 
+    // g02(1).jar opening when it is the first player (WHITE): "HHJH" (deterministic).
+    private static final Move G02_OPENING_HHJH = Move.parseMove("HHJH");
+    // Better BLACK reply we found during tuning: wins reliably vs g02(1).jar in local matches.
+    private static final Move G02_BLACK_REPLY_IHKI = Move.parseMove("IHKI");
+
     private long startTime;
     private Map<Long, int[]> tt = new HashMap<>();
     private long[][] zobrist = new long[361][3];
+    private long zobristTurn;
     private long hash = 0;
     private boolean hashSynced = false;
 
@@ -78,6 +84,8 @@ public class AI extends core.player.AI {
         for (int i = 0; i < 361; i++)
             for (int j = 0; j < 3; j++)
                 zobrist[i][j] = r.nextLong();
+        // Zobrist key for side-to-move (toggled every make/undo).
+        zobristTurn = r.nextLong();
     }
 
     @Override
@@ -118,6 +126,11 @@ public class AI extends core.player.AI {
                 return commit(new Move(s1, s2));
             }
         }
+
+        // Opening book for the strongest known opponent opening (g02(1).jar).
+        // This only affects BLACK's first response move and is a no-op in other situations.
+        Move opening = openingReplyMove(opponentMove, me);
+        if (opening != null) return commit(opening);
 
         // 3) Fast DTSS search (iterative deepening within a fixed budget)
         long dtssDeadline = startTime + DTSS_BUDGET_MS;
@@ -1289,7 +1302,9 @@ public class AI extends core.player.AI {
         }
         points.sort((a, b) -> b[1] - a[1]);
 
-        int top = Math.min(points.size(), 24);
+        int stage = board.getMoveList().size();
+        int topPoints = (stage <= 3) ? 30 : 24;
+        int top = Math.min(points.size(), topPoints);
         if (top < 2) return genMoves(me);
 
         ArrayList<ScoredMove> scored = new ArrayList<>();
@@ -1315,7 +1330,8 @@ public class AI extends core.player.AI {
 
         scored.sort((a, b) -> b.score - a.score);
 
-        int limit = Math.min(scored.size(), 35);
+        int moveLimit = (stage <= 3) ? 60 : 35;
+        int limit = Math.min(scored.size(), moveLimit);
         ArrayList<Move> moves = new ArrayList<>(limit);
         for (int i = 0; i < limit; i++) moves.add(scored.get(i).move);
         return moves.isEmpty() ? genMoves(me) : moves;
@@ -1409,7 +1425,10 @@ public class AI extends core.player.AI {
     private List<Move> genMoves(PieceColor me) {
         BoardPro bp = boardPro();
         if (bp != null) {
-            return genMovesFromRoadTable(me, 16, 35);
+            int stage = board.getMoveList().size();
+            int topPoints = (stage <= 6) ? 20 : 16;
+            int moveLimit = (stage <= 6) ? 50 : 35;
+            return genMovesFromRoadTable(me, topPoints, moveLimit);
         }
         return genMovesHeuristic(me);
     }
@@ -1636,6 +1655,7 @@ public class AI extends core.player.AI {
         int idx = (mover == PieceColor.BLACK) ? 1 : 2;
         hash ^= zobrist[m.index1()][idx] ^ zobrist[m.index2()][idx];
         hash ^= zobrist[m.index1()][0] ^ zobrist[m.index2()][0];
+        hash ^= zobristTurn;
     }
 
     private void updateHash(Move m) {
@@ -1644,12 +1664,44 @@ public class AI extends core.player.AI {
         int idx = (c == PieceColor.BLACK) ? 1 : 2;
         hash ^= zobrist[m.index1()][0] ^ zobrist[m.index2()][0];
         hash ^= zobrist[m.index1()][idx] ^ zobrist[m.index2()][idx];
+        hash ^= zobristTurn;
     }
 
     private void syncHashIfNeeded() {
         if (hashSynced) return;
         hash = computeHashFromBoard();
         hashSynced = true;
+    }
+
+    private static boolean sameUnordered(Move a, Move b) {
+        if (a == null || b == null) return false;
+        int a1 = a.index1(), a2 = a.index2();
+        int b1 = b.index1(), b2 = b.index2();
+        return (a1 == b1 && a2 == b2) || (a1 == b2 && a2 == b1);
+    }
+
+    private Move openingReplyMove(Move opponentMove, PieceColor me) {
+        if (opponentMove == null) return null;
+        if (me != PieceColor.BLACK) return null;
+        if (board.getMoveList().size() != 1) return null;
+        if (!sameUnordered(opponentMove, G02_OPENING_HHJH)) return null;
+
+        String raw = System.getProperty("g06.replyToHHJH");
+        Move reply;
+        if (raw == null || raw.isBlank()) {
+            reply = G02_BLACK_REPLY_IHKI;
+        } else {
+            try {
+                reply = Move.parseMove(raw.trim());
+            } catch (Throwable ignored) {
+                reply = G02_BLACK_REPLY_IHKI;
+            }
+        }
+        try {
+            return board.legalMove(reply) ? reply : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private long computeHashFromBoard() {
@@ -1660,6 +1712,7 @@ public class AI extends core.player.AI {
             int idx = (c == PieceColor.BLACK) ? 1 : 2;
             h ^= zobrist[pos][0] ^ zobrist[pos][idx];
         }
+        if (board.whoseMove() == PieceColor.BLACK) h ^= zobristTurn;
         return h;
     }
 
